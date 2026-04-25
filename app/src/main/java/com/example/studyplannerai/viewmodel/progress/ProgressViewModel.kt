@@ -21,6 +21,8 @@ data class ProgressUiState(
     val streakCount: Int = 0,
     val hoursStudied: Float = 0f,
     val topicsCovered: Int = 0,
+    // Map of "Day" label (Mon, Tue…) -> completed task count for the last 7 days
+    val weeklyTasksPerDay: List<Pair<String, Int>> = emptyList(),
     val errorMessage: String? = null
 )
 
@@ -39,15 +41,8 @@ class ProgressViewModel @Inject constructor(
     fun fetchAnalytics() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
-            when (val result = studyRepository.getAllTasks()) {
-                is Resource.Success -> {
-                    val tasks = result.data ?: emptyList()
-                    calculateStats(tasks)
-                }
-                is Resource.Error -> {
-                    _uiState.update { it.copy(isLoading = false, errorMessage = result.message) }
-                }
-                is Resource.Loading -> {}
+            studyRepository.getAllTasksFlow().collect { tasks ->
+                calculateStats(tasks)
             }
         }
     }
@@ -58,10 +53,11 @@ class ProgressViewModel @Inject constructor(
             return
         }
 
-        val today = LocalDate.now().toString()
-        val startOfWeek = LocalDate.now().minusDays(7).toString()
+        val today = LocalDate.now()
+        val todayStr = today.toString()
+        val startOfWeek = today.minusDays(7).toString()
 
-        val todayTasks = tasks.filter { it.day == today }
+        val todayTasks = tasks.filter { it.day == todayStr }
         val weeklyTasks = tasks.filter { it.day >= startOfWeek }
         
         val dailyProgress = if (todayTasks.isNotEmpty()) {
@@ -78,6 +74,14 @@ class ProgressViewModel @Inject constructor(
         // Simplified streak logic
         val streak = calculateStreak(tasks)
 
+        // Build 7-day completed-task-per-day list (Mon … today)
+        val weeklyPerDay = (6 downTo 0).map { daysBack ->
+            val day = today.minusDays(daysBack.toLong())
+            val label = day.dayOfWeek.name.take(3).lowercase().replaceFirstChar { it.uppercase() }
+            val count = tasks.count { it.isCompleted && it.day == day.toString() }
+            label to count
+        }
+
         _uiState.update {
             it.copy(
                 isLoading = false,
@@ -87,7 +91,8 @@ class ProgressViewModel @Inject constructor(
                 totalTasks = tasks.size,
                 streakCount = streak,
                 topicsCovered = topicsCovered,
-                hoursStudied = completedCount * 1.0f // Assuming 1 hour per task for demo
+                hoursStudied = completedCount * 1.0f,
+                weeklyTasksPerDay = weeklyPerDay
             )
         }
     }

@@ -27,4 +27,12 @@ data class TaskUiState(
 
     val completionPercent: Float
         get() = if (totalTasks == 0) 0f else completedTasks.toFloat() / totalTasks.toFloat()
+
+    // Stub: count distinct completed days as streak
+    val streakDays: Int
+        get() = tasks.filter { it.isCompleted }.mapNotNull { it.deadline }.distinct().size
+
+    // Stub: 60 minutes per completed task
+    val totalMinutesStudied: Int
+        get() = completedTasks * 60
 }

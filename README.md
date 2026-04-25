@@ -4,20 +4,21 @@ A production-grade, AI-driven study planning application built with modern Andro
 
 ## ✨ Key Features
 
-- **🧠 AI Schedule Generation**: Generates detailed study plans using Groq/Gemini AI based on a single subject input.
+- **🧠 AI Schedule Generation**: Generates detailed study plans using Groq/Gemini AI based on multiple subject inputs.
 - **🎯 Granular Topic Selection**: Don't just study a subject—select the specific topics you want to focus on.
-- **📊 Interactive Progress Dashboard**: Real-time mastery tracking that reflects active tasks and moves completed ones to history.
+- **⏱️ Focus Mode & Pomodoro**: Built-in Pomodoro timer for active tasks. Automatically toggles your device's "Do Not Disturb" mode while focusing.
+- **💬 AI Chat Assistant**: In-app conversational AI to help you understand complex study topics and guide your learning.
+- **📊 Interactive Progress Analytics**: Real-time mastery tracking with daily/weekly completion charts, streak counters, and dynamic progress bars.
 - **🔔 Smart Reminders**: Reliable `AlarmManager` integration with customizable notification offsets (5, 10, 15 mins).
 - **📝 Task-Level Control**:
   - Mark as Complete/Pending.
   - Reschedule or Delete individual tasks.
-  - Add Custom Tasks manually to any day.
-  - Regenerate specific tasks or entire plans.
+  - Regenerate specific tasks or entire plans using AI.
 - **☁️ Firebase Integration**: 
   - **Firestore**: Professional data structure for active plans and history.
-  - **Auth**: Secure user management (ready for login/signup).
+  - **Auth**: Secure user management including Sign Up, Login, and Password Recovery flows.
 - **📴 Offline-First**: Built with Room database for seamless offline access and background syncing.
-- **🎨 Premium UI/UX**: Designed with Material 3, Featuring elevated cards, dynamic bottom sheets, and grouped layouts.
+- **🎨 Premium UI/UX**: Designed with Material 3, featuring glassmorphic effects, ambient glows, dynamic bottom sheets, and grouped layouts.
 
 ## 🛠️ Technology Stack
 

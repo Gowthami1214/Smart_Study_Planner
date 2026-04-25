@@ -96,9 +96,33 @@ class AuthViewModel @Inject constructor(
         successMessage.value = null
     }
 
+    fun resetPassword(email: String) {
+        viewModelScope.launch {
+            isLoading.value = true
+            errorMessage.value = null
+            successMessage.value = null
+
+            when (val result = repository.sendPasswordResetEmail(email)) {
+                is Resource.Success -> {
+                    successMessage.value = "Password reset email sent."
+                }
+                is Resource.Error -> {
+                    errorMessage.value = result.message
+                }
+                is Resource.Loading -> {}
+            }
+            isLoading.value = false
+        }
+    }
+
     fun clearMessages() {
         errorMessage.value = null
         successMessage.value = null
+    }
+
+    /** Force-refresh the user profile. Call this when the Profile screen becomes visible. */
+    fun refreshProfile() {
+        if (repository.isUserLoggedIn()) updateUserState()
     }
 
     private fun updateUserState(fallbackEmail: String? = null) {

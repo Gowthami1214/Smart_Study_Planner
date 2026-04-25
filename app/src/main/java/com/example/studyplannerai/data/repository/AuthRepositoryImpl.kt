@@ -32,6 +32,15 @@ class AuthRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun sendPasswordResetEmail(email: String): Resource<Unit> {
+        return try {
+            auth.sendPasswordResetEmail(email).await()
+            Resource.Success(Unit)
+        } catch (e: Exception) {
+            Resource.Error(e.message ?: "Failed to send reset email")
+        }
+    }
+
     override fun logOut() {
         auth.signOut()
     }

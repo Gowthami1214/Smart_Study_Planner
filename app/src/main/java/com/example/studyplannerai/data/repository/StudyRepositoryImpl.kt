@@ -19,45 +19,33 @@ class StudyRepositoryImpl @Inject constructor(
 ) : StudyRepository {
 
     override suspend fun savePlan(plan: List<StudyPlanItem>): Resource<Unit> {
-        return try {
-            val userId = authRepository.getCurrentUserId() ?: return Resource.Error("User not logged in")
-            
-            // Save to Room (Offline-first)
-            taskDao.insertTasks(plan)
-            
-            // Sync to Firestore (Background)
-            val batch = firestore.batch()
-            plan.forEach { item ->
-                val planId = item.planId.ifBlank { "default_plan" }
-                val docRef = firestore.collection("users").document(userId)
-                    .collection("plans").document(planId)
-                    .collection("tasks").document(item.id)
-                batch.set(docRef, item)
-            }
-            batch.commit().await()
-            Resource.Success(Unit)
-        } catch (e: Exception) {
-            // Even if network fails, we saved to Room
-            Resource.Success(Unit) 
+        val userId = authRepository.getCurrentUserId() ?: return Resource.Error("User not logged in")
+        
+        // Save to Room (Offline-first)
+        taskDao.insertTasks(plan)
+        
+        // Sync to Firestore (Background)
+        val batch = firestore.batch()
+        plan.forEach { item ->
+            val planId = item.planId.ifBlank { "default_plan" }
+            val docRef = firestore.collection("users").document(userId)
+                .collection("plans").document(planId)
+                .collection("tasks").document(item.id)
+            batch.set(docRef, item)
         }
+        batch.commit().addOnFailureListener { e -> 
+            android.util.Log.e("StudyRepo", "Firestore sync failed", e) 
+        }
+        
+        return Resource.Success(Unit)
     }
 
-    override suspend fun getSavedPlan(): Resource<List<StudyPlanItem>> {
-        return try {
-            val localTasks = taskDao.getAllTasks().first().filter { !it.isCompleted }
-            Resource.Success(localTasks)
-        } catch (e: Exception) {
-            Resource.Error(e.message ?: "Failed to fetch local plan")
-        }
+    override fun getSavedPlanFlow(): Flow<List<StudyPlanItem>> {
+        return taskDao.getAllTasks()
     }
 
-    override suspend fun getAllTasks(): Resource<List<StudyPlanItem>> {
-        return try {
-            val localTasks = taskDao.getAllTasks().first()
-            Resource.Success(localTasks)
-        } catch (e: Exception) {
-            Resource.Error(e.message ?: "Failed to fetch all tasks")
-        }
+    override fun getAllTasksFlow(): Flow<List<StudyPlanItem>> {
+        return taskDao.getAllTasks()
     }
 
     override suspend fun updateTaskStatus(itemId: String, isCompleted: Boolean): Resource<Unit> {
@@ -78,15 +66,15 @@ class StudyRepositoryImpl @Inject constructor(
                     .collection("plans").document(planId)
                     .collection("tasks").document(itemId)
                     .set(updatedTask)
-                    .await()
+                    .addOnFailureListener { e -> android.util.Log.e("StudyRepo", "Update sync failed", e) }
                 
                 if (isCompleted) {
                     moveToHistory(updatedTask)
                 }
             }
-            Resource.Success(Unit)
+            return Resource.Success(Unit)
         } catch (e: Exception) {
-            Resource.Success(Unit)
+            return Resource.Error(e.message ?: "Failed to update task")
         }
     }
 
@@ -100,21 +88,17 @@ class StudyRepositoryImpl @Inject constructor(
     }
 
     override suspend fun moveToHistory(item: StudyPlanItem): Resource<Unit> {
-        return try {
-            val userId = authRepository.getCurrentUserId() ?: return Resource.Error("User not logged in")
-            firestore.collection("users").document(userId)
-                .collection("history").document(item.id)
-                .set(mapOf(
-                    "task" to item.task,
-                    "completed_at" to (item.completedAt ?: System.currentTimeMillis()),
-                    "topic" to item.topic,
-                    "id" to item.id
-                ))
-                .await()
-            Resource.Success(Unit)
-        } catch (e: Exception) {
-            Resource.Error(e.message ?: "Failed to move to history")
-        }
+        val userId = authRepository.getCurrentUserId() ?: return Resource.Error("User not logged in")
+        firestore.collection("users").document(userId)
+            .collection("history").document(item.id)
+            .set(mapOf(
+                "task" to item.task,
+                "completed_at" to (item.completedAt ?: System.currentTimeMillis()),
+                "topic" to item.topic,
+                "id" to item.id
+            ))
+            .addOnFailureListener { e -> android.util.Log.e("StudyRepo", "History sync failed", e) }
+        return Resource.Success(Unit)
     }
 
     override suspend fun updateTask(item: StudyPlanItem): Resource<Unit> {
@@ -126,7 +110,7 @@ class StudyRepositoryImpl @Inject constructor(
                 .collection("plans").document(planId)
                 .collection("tasks").document(item.id)
                 .set(item)
-                .await()
+                .addOnFailureListener { e -> android.util.Log.e("StudyRepo", "Update task sync failed", e) }
             Resource.Success(Unit)
         } catch (e: Exception) {
             Resource.Error(e.message ?: "Failed to update task")
@@ -145,7 +129,7 @@ class StudyRepositoryImpl @Inject constructor(
                     .collection("plans").document(planId)
                     .collection("tasks").document(itemId)
                     .delete()
-                    .await()
+                    .addOnFailureListener { e -> android.util.Log.e("StudyRepo", "Delete task sync failed", e) }
             }
             Resource.Success(Unit)
         } catch (e: Exception) {

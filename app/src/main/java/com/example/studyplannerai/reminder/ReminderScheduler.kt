@@ -1,83 +1,91 @@
 package com.example.studyplannerai.reminder
 
-import android.app.AlarmManager
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
-import android.os.Build
-import android.util.Log
+import androidx.work.*
+import com.example.studyplannerai.data.model.StudyPlanItem
 import com.example.studyplannerai.data.model.Task
-
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 class ReminderScheduler @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
+    fun schedule(task: StudyPlanItem) {
+        val reminderOffset = task.reminder_offset_minutes ?: 10
+        val delayMillis = calculateDelay(task.day, task.time_slot, reminderOffset)
+        
+        if (delayMillis < 0) return
+
+        val inputData = Data.Builder()
+            .putString("TASK_TITLE", task.topic)
+            .putString("TASK_TOPIC", task.task)
+            .build()
+
+        val workRequest = OneTimeWorkRequestBuilder<ReminderWorker>()
+            .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
+            .setInputData(inputData)
+            .addTag(task.id)
+            .build()
+
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            task.id,
+            ExistingWorkPolicy.REPLACE,
+            workRequest
+        )
+    }
 
     fun schedule(task: Task) {
         val reminderTime = task.reminderTime ?: return
-        if (reminderTime <= System.currentTimeMillis()) {
-            Log.w("ReminderScheduler", "Cannot schedule alarm for the past: ${task.title}")
-            return
-        }
+        val delayMillis = reminderTime - System.currentTimeMillis()
+        
+        if (delayMillis <= 0) return
 
-        NotificationHelper.createNotificationChannel(context)
+        val inputData = Data.Builder()
+            .putString("TASK_TITLE", task.title)
+            .putString("TASK_TOPIC", task.subject)
+            .build()
 
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val pendingIntent = buildPendingIntent(task)
+        val workRequest = OneTimeWorkRequestBuilder<ReminderWorker>()
+            .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
+            .setInputData(inputData)
+            .addTag(task.id)
+            .build()
 
-        Log.d("ReminderScheduler", "Scheduling alarm for task: ${task.title} at $reminderTime")
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP,
-                reminderTime,
-                pendingIntent
-            )
-        } else {
-            alarmManager.setExact(
-                AlarmManager.RTC_WAKEUP,
-                reminderTime,
-                pendingIntent
-            )
-        }
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            task.id,
+            ExistingWorkPolicy.REPLACE,
+            workRequest
+        )
     }
 
     fun cancel(taskId: String) {
-        Log.d("ReminderScheduler", "Cancelling alarm for taskId: $taskId")
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        val pendingIntent = buildPendingIntent(taskId = taskId, title = "", subject = "")
-        alarmManager.cancel(pendingIntent)
-        pendingIntent.cancel()
+        WorkManager.getInstance(context).cancelUniqueWork(taskId)
     }
 
-    private fun buildPendingIntent(task: Task): PendingIntent {
-        return buildPendingIntent(
-            taskId = task.id,
-            title = task.title,
-            subject = task.subject
-        )
-    }
-
-    private fun buildPendingIntent(
-        taskId: String,
-        title: String,
-        subject: String
-    ): PendingIntent {
-        val message = "Reminder for $title"
-        val intent = Intent(context, ReminderReceiver::class.java).apply {
-            putExtra(ReminderReceiver.EXTRA_TASK_ID, taskId)
-            putExtra(ReminderReceiver.EXTRA_TASK_TITLE, title)
-            putExtra(ReminderReceiver.EXTRA_TASK_SUBJECT, subject)
-            putExtra(ReminderReceiver.EXTRA_TASK_MESSAGE, message)
+    private fun calculateDelay(dayStr: String, timeSlot: String, offsetMinutes: Int): Long {
+        return try {
+            val startTimeStr = timeSlot.split("-").firstOrNull()?.trim() ?: return -1L
+            val format = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+            val timeDate = format.parse(startTimeStr) ?: return -1L
+            
+            val dayFormat = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+            val date = dayFormat.parse(dayStr) ?: return -1L
+            
+            val timeCalendar = java.util.Calendar.getInstance().apply { time = timeDate }
+            val dayCalendar = java.util.Calendar.getInstance().apply { time = date }
+            
+            dayCalendar.set(java.util.Calendar.HOUR_OF_DAY, timeCalendar.get(java.util.Calendar.HOUR_OF_DAY))
+            dayCalendar.set(java.util.Calendar.MINUTE, timeCalendar.get(java.util.Calendar.MINUTE))
+            dayCalendar.set(java.util.Calendar.SECOND, 0)
+            dayCalendar.set(java.util.Calendar.MILLISECOND, 0)
+            
+            val targetTime = dayCalendar.timeInMillis - (offsetMinutes * 60 * 1000)
+            val now = System.currentTimeMillis()
+            
+            if (targetTime < now) -1L else targetTime - now
+        } catch (e: Exception) {
+            -1L
         }
-
-        return PendingIntent.getBroadcast(
-            context,
-            taskId.hashCode(),
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
     }
 }

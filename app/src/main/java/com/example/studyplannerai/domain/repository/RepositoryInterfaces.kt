@@ -14,12 +14,13 @@ interface AiRepository {
         breakDuration: Int
     ): Resource<List<StudyPlanItem>>
     suspend fun generateScheduleForSubject(subject: String): Resource<List<StudyPlanItem>>
+    suspend fun chatWithAssistant(userMessage: String, historyContext: String): Resource<String>
 }
 
 interface StudyRepository {
     suspend fun savePlan(plan: List<StudyPlanItem>): Resource<Unit>
-    suspend fun getSavedPlan(): Resource<List<StudyPlanItem>>
-    suspend fun getAllTasks(): Resource<List<StudyPlanItem>>
+    fun getSavedPlanFlow(): Flow<List<StudyPlanItem>>
+    fun getAllTasksFlow(): Flow<List<StudyPlanItem>>
     suspend fun updateTaskStatus(itemId: String, isCompleted: Boolean): Resource<Unit>
     suspend fun getHistory(): Resource<List<StudyPlanItem>>
     suspend fun moveToHistory(item: StudyPlanItem): Resource<Unit>
@@ -40,5 +41,6 @@ interface AuthRepository {
     fun getCurrentUser(): com.google.firebase.auth.FirebaseUser?
     suspend fun signUp(email: String, password: String): Resource<Unit>
     suspend fun logIn(email: String, password: String): Resource<Unit>
+    suspend fun sendPasswordResetEmail(email: String): Resource<Unit>
     fun logOut()
 }
