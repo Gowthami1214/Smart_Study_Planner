@@ -30,12 +30,15 @@ class AiRepositoryImpl @Inject constructor(
               "mode": "topics",
               "subject": "$subject"
             }
-            Generate 5–10 realistic topics. granular names. Return ONLY JSON.
+            Generate 5–10 realistic topics with granular names.
+            Return ONLY valid JSON with exactly the key 'topics' containing an array of strings.
+            Example format: { "topics": ["Topic 1", "Topic 2"] }
+            Do not use objects inside the array. No markdown formatting.
         """.trimIndent()
 
         val request = GroqRequest(
             messages = listOf(
-                GroqMessage(role = "system", content = "You are a professional API. Return ONLY valid JSON. No explanations."),
+                GroqMessage(role = "system", content = "You are a professional API. Return ONLY valid JSON with 'topics' as an array of strings. No explanations."),
                 GroqMessage(role = "user", content = prompt)
             )
         )
@@ -64,17 +67,22 @@ class AiRepositoryImpl @Inject constructor(
         preferredTime: String,
         breakDuration: Int
     ): Resource<List<StudyPlanItem>> {
+        val startDate = java.time.LocalDate.now()
+        val dateList = (0 until availableHours).map { startDate.plusDays(it.toLong()).toString() }
+
         val prompt = """
             {
               "mode": "schedule",
               "selected_topics": ${Gson().toJson(selectedTopics)},
-              "hours_per_day": $availableHours,
+              "days": $availableHours,
               "preferred_time": "$preferredTime",
               "break_duration": $breakDuration
             }
-            Rules: 24h format, include breaks. 
-            - Use ISO dates (YYYY-MM-DD) for 'day' starting from today (${java.time.LocalDate.now()})
-            - realistic time slots (HH:mm) for 'time_slot'
+            Rules: 24h format, include breaks.
+            CRITICAL: Distribute tasks evenly across $availableHours days ($startDate to ${startDate.plusDays((availableHours - 1).toLong())}).
+            Each day should have 2-4 tasks max. Use these dates: ${dateList.joinToString(", ")}.
+            - Use ISO dates (YYYY-MM-DD) for 'day'
+            - realistic time slots (HH:mm-HH:mm) for 'time_slot'
             'task' must be a specific actionable instruction (e.g. "Solve 10 recursion problems" NOT "Study recursion").
             MUST include "duration_minutes" (30-120)
             MUST include "status": "pending"
@@ -97,7 +105,16 @@ class AiRepositoryImpl @Inject constructor(
             val aiResponse = Gson().fromJson(cleanText, AiResponseDto::class.java)
             val schedule = aiResponse?.schedule ?: throw Exception("Invalid API Response Format: Missing schedule array")
             
-            val finalizedSchedule = schedule.mapIndexed { index, item ->
+            // Apply ScheduleDistributor as safety net to guarantee multi-day distribution
+            val distributed = com.example.studyplannerai.domain.scheduler.ScheduleDistributor.distribute(
+                tasks = schedule,
+                days = availableHours,
+                startDate = startDate,
+                maxMinutesPerDay = 240,
+                breakMinutes = breakDuration
+            )
+
+            val finalizedSchedule = distributed.mapIndexed { index, item ->
                 item.copy(id = "${System.currentTimeMillis()}_$index")
             }
             Resource.Success(finalizedSchedule)

@@ -28,6 +28,9 @@ import com.example.studyplannerai.viewmodel.planner.PlannerUiState
 import com.example.studyplannerai.viewmodel.planner.PlannerViewModel
 import java.time.LocalDate
 
+import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun PlannerScreen(
@@ -45,6 +48,14 @@ fun PlannerScreen(
     val sheetState = rememberModalBottomSheetState()
     var showOptionsSheet by remember { mutableStateOf(false) }
     var showCustomTaskDialog by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+
+    LaunchedEffect(uiState.errorMessage) {
+        uiState.errorMessage?.let {
+            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+        }
+    }
 
     fun onRequestNewPlan() {
         if (uiState.studyPlan.isNotEmpty()) showModifyDialog = true
@@ -111,7 +122,13 @@ fun PlannerScreen(
                         showOptionsSheet = true
                     },
                     onAddMore = { showCustomTaskDialog = true },
-                    onScheduleAgain = { onRequestNewPlan() }
+                    onScheduleAgain = { onRequestNewPlan() },
+                    todayTasks = uiState.todayTasks,
+                    tomorrowTasks = uiState.tomorrowTasks,
+                    upcomingTasks = uiState.upcomingTasks,
+                    missedTasks = uiState.missedTasks,
+                    carryForwardCount = uiState.carryForwardCount,
+                    dailyProgressMap = uiState.dailyProgressMap
                 )
             }
         }
@@ -395,15 +412,14 @@ fun ActivePlanSection(
     progress: Float,
     onTaskClick: (StudyPlanItem) -> Unit,
     onAddMore: () -> Unit,
-    onScheduleAgain: () -> Unit
+    onScheduleAgain: () -> Unit,
+    todayTasks: List<StudyPlanItem> = emptyList(),
+    tomorrowTasks: List<StudyPlanItem> = emptyList(),
+    upcomingTasks: List<StudyPlanItem> = emptyList(),
+    missedTasks: List<StudyPlanItem> = emptyList(),
+    carryForwardCount: Int = 0,
+    dailyProgressMap: Map<String, Float> = emptyMap()
 ) {
-    // Group by subject (planId) then day, done outside LazyColumn and remembered
-    val groupedByPlan = remember(plan) {
-        plan.groupBy { it.planId.ifBlank { "General" } }.mapValues { (_, planTasks) ->
-            planTasks.groupBy { it.day }
-        }
-    }
-
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
@@ -438,16 +454,94 @@ fun ActivePlanSection(
             }
         }
 
-        groupedByPlan.forEach { (planId, groupedByDay) ->
+        // ─── Carry-Forward Banner ───
+        if (carryForwardCount > 0) {
             item {
-                Text(
-                    text = planId,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Black,
-                    modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Amber400.copy(0.1f),
+                    border = BorderStroke(1.dp, Amber400.copy(0.3f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(Icons.Default.Update, null, tint = Amber400, modifier = Modifier.size(20.dp))
+                        Text(
+                            "📌 $carryForwardCount task${if (carryForwardCount > 1) "s" else ""} carried forward from previous days",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Amber400,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+
+        // ─── Missed Tasks Section ───
+        if (missedTasks.isNotEmpty()) {
+            item {
+                SectionHeader(
+                    title = "Missed",
+                    count = missedTasks.size,
+                    icon = Icons.Default.Warning,
+                    color = Rose400
                 )
             }
-            groupedByDay.forEach { (day, tasks) ->
+            items(missedTasks) { task ->
+                PremiumTaskCard(task, onClick = { onTaskClick(task) })
+            }
+        }
+
+        // ─── Today Section ───
+        item {
+            SectionHeader(
+                title = "Today",
+                count = todayTasks.size,
+                icon = Icons.Default.Today,
+                color = Violet300,
+                progress = dailyProgressMap[java.time.LocalDate.now().toString()]
+            )
+        }
+        if (todayTasks.isEmpty()) {
+            item {
+                EmptyDayCard("No tasks scheduled for today")
+            }
+        }
+        items(todayTasks) { task ->
+            PremiumTaskCard(task, onClick = { onTaskClick(task) })
+        }
+
+        // ─── Tomorrow Section ───
+        if (tomorrowTasks.isNotEmpty()) {
+            item {
+                SectionHeader(
+                    title = "Tomorrow",
+                    count = tomorrowTasks.size,
+                    icon = Icons.Default.EventNote,
+                    color = Cyan300,
+                    progress = dailyProgressMap[java.time.LocalDate.now().plusDays(1).toString()]
+                )
+            }
+            items(tomorrowTasks) { task ->
+                PremiumTaskCard(task, onClick = { onTaskClick(task) })
+            }
+        }
+
+        // ─── Upcoming Section ───
+        if (upcomingTasks.isNotEmpty()) {
+            val upcomingGrouped = upcomingTasks.groupBy { it.day }
+            item {
+                SectionHeader(
+                    title = "Upcoming",
+                    count = upcomingTasks.size,
+                    icon = Icons.Default.DateRange,
+                    color = Emerald400
+                )
+            }
+            upcomingGrouped.forEach { (day, tasks) ->
                 item {
                     DayHeader(day)
                 }
@@ -457,18 +551,104 @@ fun ActivePlanSection(
             }
         }
         
+        // ─── History Section ───
         if (history.isNotEmpty()) {
             item {
-                Text(
-                    text = "History",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Black,
-                    modifier = Modifier.padding(top = 24.dp, bottom = 8.dp)
+                SectionHeader(
+                    title = "Completed",
+                    count = history.size,
+                    icon = Icons.Default.CheckCircle,
+                    color = Emerald400
                 )
             }
-            items(history) { task ->
+            items(history.take(10)) { task ->
                 PremiumTaskCard(task, onClick = { })
             }
+        }
+    }
+}
+
+@Composable
+fun SectionHeader(
+    title: String,
+    count: Int,
+    icon: ImageVector,
+    color: Color,
+    progress: Float? = null
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 16.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(color.copy(0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, null, tint = color, modifier = Modifier.size(18.dp))
+            }
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = OnSurface100
+            )
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = color.copy(alpha = 0.1f)
+            ) {
+                Text(
+                    "$count",
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = color
+                )
+            }
+        }
+        progress?.let { pct ->
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = Surface700
+            ) {
+                Text(
+                    "${(pct * 100).toInt()}%",
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (pct >= 1f) Emerald400 else OnSurface200
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun EmptyDayCard(message: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(Surface800)
+            .border(BorderStroke(1.dp, Surface600), RoundedCornerShape(16.dp))
+            .padding(20.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Icon(Icons.Default.EventAvailable, null, tint = OnSurface300, modifier = Modifier.size(18.dp))
+            Text(message, style = MaterialTheme.typography.bodyMedium, color = OnSurface300)
         }
     }
 }
@@ -499,22 +679,34 @@ fun PremiumTaskCard(task: StudyPlanItem, onClick: () -> Unit) {
             .padding(16.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            // Rounded-square icon (more modern and recognizable than a bare circle)
             Box(
-                modifier = Modifier.size(52.dp).clip(CircleShape).background(iconBg),
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(iconBg),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = if (isCompleted) Icons.Default.CheckCircle else Icons.Default.MenuBook,
-                    contentDescription = null,
+                    contentDescription = if (isCompleted) "Completed" else "Pending",
                     tint = iconColor,
-                    modifier = Modifier.size(26.dp)
+                    modifier = Modifier.size(24.dp)
                 )
             }
-            Spacer(modifier = Modifier.width(16.dp))
+            Spacer(modifier = Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     TimeBadge(task.time_slot)
                     DurationBadge("${task.duration_minutes}m")
+                    if (task.isCarriedForward) {
+                        Surface(color = Amber400.copy(alpha = 0.12f), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, Amber400.copy(0.25f))) {
+                            Row(modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Icon(Icons.Default.Update, null, modifier = Modifier.size(10.dp), tint = Amber400)
+                                Text("Carried", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Amber400)
+                            }
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
@@ -530,8 +722,30 @@ fun PremiumTaskCard(task: StudyPlanItem, onClick: () -> Unit) {
                     maxLines = 2
                 )
             }
-            if (!isCompleted) {
-                Icon(Icons.Default.ChevronRight, null, tint = OnSurface300, modifier = Modifier.size(20.dp))
+            // Explicit status label instead of bare chevron
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = if (isCompleted) Emerald400.copy(0.12f) else Violet400.copy(0.08f),
+                border = BorderStroke(1.dp, if (isCompleted) Emerald400.copy(0.3f) else Violet400.copy(0.15f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isCompleted) Icons.Default.Check else Icons.Default.TouchApp,
+                        contentDescription = null,
+                        tint = if (isCompleted) Emerald400 else Violet300,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Text(
+                        text = if (isCompleted) "Done" else "Tap",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isCompleted) Emerald400 else Violet300
+                    )
+                }
             }
         }
     }

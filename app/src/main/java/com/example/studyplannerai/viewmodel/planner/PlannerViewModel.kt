@@ -17,7 +17,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import android.content.Context
 import javax.inject.Inject
 
-enum class PomodoroState { Idle, Running, Paused, Break }
+
 
 data class PlannerUiState(
     val isLoading: Boolean = false,
@@ -29,7 +29,14 @@ data class PlannerUiState(
     val errorMessage: String? = null,
     val progress: Float = 0f,
     val isPlanAccepted: Boolean = false,
-    val showDndPermissionDialog: Boolean = false
+    val showDndPermissionDialog: Boolean = false,
+    // Date-grouped sections
+    val todayTasks: List<StudyPlanItem> = emptyList(),
+    val tomorrowTasks: List<StudyPlanItem> = emptyList(),
+    val upcomingTasks: List<StudyPlanItem> = emptyList(),
+    val missedTasks: List<StudyPlanItem> = emptyList(),
+    val carryForwardCount: Int = 0,
+    val dailyProgressMap: Map<String, Float> = emptyMap()
 )
 
 @HiltViewModel
@@ -43,22 +50,21 @@ class PlannerViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(PlannerUiState())
     val uiState: StateFlow<PlannerUiState> = _uiState.asStateFlow()
 
-    private val _pomodoroState = MutableStateFlow(PomodoroState.Idle)
-    val pomodoroState: StateFlow<PomodoroState> = _pomodoroState.asStateFlow()
-
-    private val _pomodoroSecondsLeft = MutableStateFlow(25 * 60)
-    val pomodoroSecondsLeft: StateFlow<Int> = _pomodoroSecondsLeft.asStateFlow()
-
-    private val _pomodoroBreakSecondsLeft = MutableStateFlow(5 * 60)
-    val pomodoroBreakSecondsLeft: StateFlow<Int> = _pomodoroBreakSecondsLeft.asStateFlow()
-
-    private val _activePomodoroTaskId = MutableStateFlow<String?>(null)
-    val activePomodoroTaskId: StateFlow<String?> = _activePomodoroTaskId.asStateFlow()
-
-    private var timerJob: kotlinx.coroutines.Job? = null
 
     init {
         loadSavedPlan()
+        handleCarryForward()
+    }
+
+    private fun handleCarryForward() {
+        viewModelScope.launch {
+            // Mark old tasks as missed, then carry forward eligible ones
+            studyRepository.markOverdueAsMissed()
+            val result = studyRepository.carryForwardOverdueTasks()
+            if (result is Resource.Success && (result.data ?: 0) > 0) {
+                _uiState.update { it.copy(carryForwardCount = result.data ?: 0) }
+            }
+        }
     }
 
     fun loadSavedPlan() {
@@ -233,105 +239,50 @@ class PlannerViewModel @Inject constructor(
         val activeTasks  = plan.filter { !it.isCompleted && it.status != "completed" }
         val historyTasks = plan.filter {  it.isCompleted || it.status == "completed" }
 
-        val todayStr      = java.time.LocalDate.now().toString()
-        val todayActive   = activeTasks.count  { it.day == todayStr }
+        val today = java.time.LocalDate.now()
+        val todayStr = today.toString()
+        val tomorrowStr = today.plusDays(1).toString()
+
+        // Date-grouped sections
+        val todayTasks = activeTasks.filter { it.day == todayStr }.sortedWith(
+            compareByDescending<StudyPlanItem> { it.priority }.thenBy { it.time_slot }
+        )
+        val tomorrowTasks = activeTasks.filter { it.day == tomorrowStr }.sortedBy { it.time_slot }
+        val upcomingTasks = activeTasks.filter { it.day > tomorrowStr }.sortedWith(
+            compareBy<StudyPlanItem> { it.day }.thenBy { it.time_slot }
+        )
+        val missedTasks = activeTasks.filter { it.day < todayStr && it.status == "missed" }
+
+        // Calculate today's progress
+        val todayActive   = todayTasks.size
         val todayCompleted = historyTasks.count { it.day == todayStr }
         val totalToday    = todayActive + todayCompleted
-        // Only show progress when there are actual tasks for today
         val progress = if (totalToday > 0) todayCompleted.toFloat() / totalToday.toFloat() else 0f
+
+        // Build daily progress map for the week
+        val allDays = plan.map { it.day }.distinct().sorted()
+        val dailyProgressMap = allDays.associateWith { day ->
+            val dayTotal = plan.count { it.day == day }
+            val dayCompleted = plan.count { it.day == day && (it.isCompleted || it.status == "completed") }
+            if (dayTotal > 0) dayCompleted.toFloat() / dayTotal.toFloat() else 0f
+        }
 
         _uiState.update {
             it.copy(
                 isLoading  = false,
-                studyPlan  = activeTasks.sortedBy  { p -> p.time_slot },
+                studyPlan  = activeTasks.sortedWith(
+                    compareBy<StudyPlanItem> { p -> p.day }.thenBy { p -> p.time_slot }
+                ),
                 history    = historyTasks.sortedByDescending { p -> p.completedAt ?: 0 },
-                progress   = progress
+                progress   = progress,
+                todayTasks = todayTasks,
+                tomorrowTasks = tomorrowTasks,
+                upcomingTasks = upcomingTasks,
+                missedTasks = missedTasks,
+                dailyProgressMap = dailyProgressMap
             )
         }
     }
 
-    fun startPomodoro(taskId: String, durationMinutes: Int = 25) {
-        if (_activePomodoroTaskId.value != taskId) {
-            _activePomodoroTaskId.value = taskId
-            _pomodoroSecondsLeft.value = durationMinutes * 60
-            _pomodoroBreakSecondsLeft.value = 5 * 60
-        }
-        if (_pomodoroState.value != PomodoroState.Running && _pomodoroState.value != PomodoroState.Break) {
-            _pomodoroState.value = PomodoroState.Running
-            toggleDnd(true)
-            startTimerJob(durationMinutes * 60)
-        }
-    }
 
-    fun pausePomodoro() {
-        if (_pomodoroState.value == PomodoroState.Running) {
-            _pomodoroState.value = PomodoroState.Paused
-            toggleDnd(false)
-            timerJob?.cancel()
-        }
-    }
-
-    fun resumePomodoro() {
-        if (_pomodoroState.value == PomodoroState.Paused) {
-            _pomodoroState.value = PomodoroState.Running
-            toggleDnd(true)
-            startTimerJob(25 * 60)
-        }
-    }
-
-    fun resetPomodoro(durationMinutes: Int = 25) {
-        timerJob?.cancel()
-        _pomodoroState.value = PomodoroState.Idle
-        toggleDnd(false)
-        _pomodoroSecondsLeft.value = durationMinutes * 60
-        _pomodoroBreakSecondsLeft.value = 5 * 60
-    }
-
-    fun dismissDndDialog() {
-        _uiState.update { it.copy(showDndPermissionDialog = false) }
-    }
-
-    private fun toggleDnd(enabled: Boolean) {
-        try {
-            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-            if (notificationManager.isNotificationPolicyAccessGranted) {
-                val filter = if (enabled) android.app.NotificationManager.INTERRUPTION_FILTER_NONE else android.app.NotificationManager.INTERRUPTION_FILTER_ALL
-                notificationManager.setInterruptionFilter(filter)
-            } else {
-                if (enabled) {
-                    _uiState.update { it.copy(showDndPermissionDialog = true) }
-                }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    private fun startTimerJob(totalSeconds: Int) {
-        timerJob?.cancel()
-        timerJob = viewModelScope.launch {
-            while (true) {
-                kotlinx.coroutines.delay(1000)
-                if (_pomodoroState.value == PomodoroState.Running) {
-                    if (_pomodoroSecondsLeft.value > 0) {
-                        _pomodoroSecondsLeft.value--
-                    } else {
-                        _pomodoroState.value = PomodoroState.Break
-                        toggleDnd(false)
-                    }
-                } else if (_pomodoroState.value == PomodoroState.Break) {
-                    if (_pomodoroBreakSecondsLeft.value > 0) {
-                        _pomodoroBreakSecondsLeft.value--
-                    } else {
-                        _pomodoroSecondsLeft.value = totalSeconds
-                        _pomodoroBreakSecondsLeft.value = 5 * 60
-                        _pomodoroState.value = PomodoroState.Idle
-                        toggleDnd(false)
-                        timerJob?.cancel()
-                        break
-                    }
-                }
-            }
-        }
-    }
 }

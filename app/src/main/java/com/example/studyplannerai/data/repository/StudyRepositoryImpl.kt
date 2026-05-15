@@ -4,6 +4,7 @@ import com.example.studyplannerai.core.util.Resource
 import com.example.studyplannerai.data.model.StudyPlanItem
 import com.example.studyplannerai.domain.repository.AuthRepository
 import com.example.studyplannerai.domain.repository.StudyRepository
+import com.example.studyplannerai.domain.scheduler.ScheduleDistributor
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
@@ -11,12 +12,19 @@ import javax.inject.Inject
 import com.example.studyplannerai.data.local.TaskDao
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import java.time.LocalDate
+import java.time.LocalTime
 
 class StudyRepositoryImpl @Inject constructor(
     private val firestore: FirebaseFirestore,
     private val authRepository: AuthRepository,
     private val taskDao: TaskDao
 ) : StudyRepository {
+
+    companion object {
+        private const val MAX_DAILY_MINUTES = 240 // 4 hours
+        private const val MAX_CARRY_FORWARD_DAYS = 3 // After 3 days, mark as missed permanently
+    }
 
     override suspend fun savePlan(plan: List<StudyPlanItem>): Resource<Unit> {
         val userId = authRepository.getCurrentUserId() ?: return Resource.Error("User not logged in")
@@ -46,6 +54,10 @@ class StudyRepositoryImpl @Inject constructor(
 
     override fun getAllTasksFlow(): Flow<List<StudyPlanItem>> {
         return taskDao.getAllTasks()
+    }
+
+    override fun getTasksForDateRange(startDate: String, endDate: String): Flow<List<StudyPlanItem>> {
+        return taskDao.getTasksForDateRange(startDate, endDate)
     }
 
     override suspend fun updateTaskStatus(itemId: String, isCompleted: Boolean): Resource<Unit> {
@@ -134,6 +146,90 @@ class StudyRepositoryImpl @Inject constructor(
             Resource.Success(Unit)
         } catch (e: Exception) {
             Resource.Error(e.message ?: "Failed to delete task")
+        }
+    }
+
+    override suspend fun markOverdueAsMissed(): Resource<Unit> {
+        return try {
+            val today = LocalDate.now().toString()
+            taskDao.markOverdueTasksAsMissed(today)
+            Resource.Success(Unit)
+        } catch (e: Exception) {
+            Resource.Error(e.message ?: "Failed to mark overdue tasks")
+        }
+    }
+
+    override suspend fun carryForwardOverdueTasks(): Resource<Int> {
+        return try {
+            val today = LocalDate.now()
+            val todayStr = today.toString()
+
+            // 1. Find all tasks from past days that are still pending
+            val overdueTasks = taskDao.getOverdueTasks(todayStr).first()
+            if (overdueTasks.isEmpty()) return Resource.Success(0)
+
+            // 2. Filter out tasks that have been overdue for too long (> MAX_CARRY_FORWARD_DAYS)
+            val (carryable, expired) = overdueTasks.partition { task ->
+                val taskDate = runCatching { LocalDate.parse(task.originalDay.ifBlank { task.day }) }.getOrNull()
+                taskDate != null && java.time.temporal.ChronoUnit.DAYS.between(taskDate, today) <= MAX_CARRY_FORWARD_DAYS
+            }
+
+            // Mark expired tasks as missed permanently
+            expired.forEach { task ->
+                taskDao.updateTask(task.copy(status = "missed"))
+            }
+
+            if (carryable.isEmpty()) return Resource.Success(0)
+
+            // 3. Get today's existing tasks to calculate remaining capacity
+            val todayTasks = taskDao.getTasksForDate(todayStr).first()
+            val todayMinutes = todayTasks.sumOf { it.duration_minutes }
+            var remainingMinutes = MAX_DAILY_MINUTES - todayMinutes
+
+            // 4. Sort overdue tasks by priority (high first), then by original date (oldest first)
+            val sorted = carryable.sortedWith(
+                compareByDescending<StudyPlanItem> { it.priority }
+                    .thenBy { it.day }
+            )
+
+            // 5. Move tasks: fill today first, overflow to tomorrow, etc.
+            var carriedCount = 0
+            var dayOffset = 0L
+            var usedMinutesInOverflowDay = 0
+
+            for (task in sorted) {
+                if (dayOffset == 0L && remainingMinutes <= 0) {
+                    // Today is full, start pushing to tomorrow
+                    dayOffset = 1L
+                    usedMinutesInOverflowDay = 0
+                }
+                if (dayOffset > 0L && usedMinutesInOverflowDay + task.duration_minutes > MAX_DAILY_MINUTES) {
+                    // Overflow day is also full, go to next day
+                    dayOffset++
+                    usedMinutesInOverflowDay = 0
+                }
+
+                val targetDay = today.plusDays(dayOffset).toString()
+                taskDao.carryForwardTask(task.id, targetDay)
+                carriedCount++
+
+                if (dayOffset == 0L) {
+                    remainingMinutes -= task.duration_minutes
+                } else {
+                    usedMinutesInOverflowDay += task.duration_minutes
+                }
+            }
+
+            // 6. Rebalance today's time slots after carry-forward
+            val updatedTodayTasks = taskDao.getTasksForDate(todayStr).first()
+                .filter { !it.isCompleted && it.status != "completed" }
+            val rebalanced = ScheduleDistributor.rebalanceDayTimeslots(updatedTodayTasks)
+            rebalanced.forEach { taskDao.updateTask(it) }
+
+            Resource.Success(carriedCount)
+        } catch (e: Exception) {
+            android.util.Log.e("StudyRepo", "Carry forward failed", e)
+            Resource.Error(e.message ?: "Failed to carry forward tasks")
         }
     }
 }

@@ -26,6 +26,9 @@ interface StudyRepository {
     suspend fun moveToHistory(item: StudyPlanItem): Resource<Unit>
     suspend fun updateTask(item: StudyPlanItem): Resource<Unit>
     suspend fun deleteTask(itemId: String): Resource<Unit>
+    suspend fun carryForwardOverdueTasks(): Resource<Int>
+    fun getTasksForDateRange(startDate: String, endDate: String): Flow<List<StudyPlanItem>>
+    suspend fun markOverdueAsMissed(): Resource<Unit>
 }
 
 interface GoalRepository {

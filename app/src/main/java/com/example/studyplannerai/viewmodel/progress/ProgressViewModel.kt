@@ -82,6 +82,9 @@ class ProgressViewModel @Inject constructor(
             label to count
         }
 
+        // Calculate actual study hours from completed task durations
+        val totalStudyMinutes = tasks.filter { it.isCompleted }.sumOf { it.duration_minutes }
+
         _uiState.update {
             it.copy(
                 isLoading = false,
@@ -91,7 +94,7 @@ class ProgressViewModel @Inject constructor(
                 totalTasks = tasks.size,
                 streakCount = streak,
                 topicsCovered = topicsCovered,
-                hoursStudied = completedCount * 1.0f,
+                hoursStudied = totalStudyMinutes / 60f,
                 weeklyTasksPerDay = weeklyPerDay
             )
         }

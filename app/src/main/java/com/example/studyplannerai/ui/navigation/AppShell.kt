@@ -37,7 +37,9 @@ import com.example.studyplannerai.ui.planner.PlannerScreen
 import com.example.studyplannerai.ui.profile.ProfileScreen
 import com.example.studyplannerai.ui.progress.ProgressScreen
 import com.example.studyplannerai.ui.theme.*
+import com.example.studyplannerai.ui.focus.FocusSessionScreen
 import com.example.studyplannerai.viewmodel.auth.AuthViewModel
+import com.example.studyplannerai.viewmodel.focus.FocusViewModel
 import com.example.studyplannerai.viewmodel.permission.PermissionViewModel
 import com.example.studyplannerai.viewmodel.planner.PlannerViewModel
 import com.example.studyplannerai.viewmodel.progress.ProgressViewModel
@@ -62,6 +64,7 @@ fun AppShell(
     authViewModel: AuthViewModel = hiltViewModel()
 ) {
     val plannerViewModel: PlannerViewModel = hiltViewModel()
+    val focusViewModel: FocusViewModel = hiltViewModel()
     val progressViewModel: ProgressViewModel = hiltViewModel()
     val taskViewModel: TaskViewModel = hiltViewModel()
     val settingsViewModel: SettingsViewModel = hiltViewModel()
@@ -182,6 +185,12 @@ fun AppShell(
                 AppTab.Profile -> ProfileScreen(authViewModel = authViewModel, taskViewModel = taskViewModel, innerPadding = paddingValues)
             }
         }
+    }
+
+    // Focus Session Overlay
+    val focusState by focusViewModel.sessionState.collectAsStateWithLifecycle()
+    if (focusState.isActive || focusState.showCompletionDialog || focusState.showDurationPicker) {
+        FocusSessionScreen(focusViewModel = focusViewModel, onNavigateBack = {})
     }
 }
 

@@ -12,10 +12,18 @@ data class StudyPlanItem(
     val duration_minutes: Int = 60,
     val topic: String = "",
     val task: String = "",
-    val status: String = "pending", // "pending", "completed"
+    val status: String = "pending", // "pending", "completed", "missed"
     val reminder_offset_minutes: Int = 10,
     val isCompleted: Boolean = false,
-    val completedAt: Long? = null
+    val completedAt: Long? = null,
+    val priority: Int = 0,              // 0=normal, 1=high (carried-over), 2=critical
+    val isCarriedForward: Boolean = false,
+    val originalDay: String = "",       // tracks original scheduled date before carry-forward
+    
+    // Focus Session Tracking
+    val completedMinutes: Int = 0,      // total focused minutes on this task
+    val sessionCount: Int = 0,          // how many focus sessions completed
+    val lastFocusedAt: Long? = null     // timestamp of last focus session
 )
 
 data class UserStats(

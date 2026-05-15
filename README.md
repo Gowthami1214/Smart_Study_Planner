@@ -31,11 +31,15 @@ A production-grade, AI-driven study planning application built with modern Andro
 - **AI Engine**: Groq API (LLaMA 3)
 - **Background Tasks**: AlarmManager + BroadcastReceiver
 
-## 📱 Screenshots (Mockups)
+## 📱 Screenshots
 
-| Subject Input | Topic Selection | Active Schedule | Task Options |
-| :---: | :---: | :---: | :---: |
-| 📝 | ✅ | 📅 | ⚙️ |
+| Login | Sign Up | Profile |
+| :---: | :---: | :---: |
+| <img src="screenshots/Login.jpeg" width="200" alt="Login"> | <img src="screenshots/SignUp_page.jpeg" width="200" alt="Sign Up"> | <img src="screenshots/Profile.jpeg" width="200" alt="Profile"> |
+
+| Home | Today's Task | Progress |
+| :---: | :---: | :---: |
+| <img src="screenshots/Home.jpeg" width="200" alt="Home"> | <img src="screenshots/Todays_task.jpeg" width="200" alt="Today's Task"> | <img src="screenshots/ProgressPage.jpeg" width="200" alt="Progress"> |
 
 ## 🚀 Getting Started
 
